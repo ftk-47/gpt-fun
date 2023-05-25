@@ -1,113 +1,329 @@
-import Image from 'next/image'
+"use client"
+import { useEffect, useRef, useState } from "react"
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { nightOwl } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { useLocalStorage } from "@/Hooks/useLocalStorage"
 
-export default function Home() {
+const ChatbotApp = () => {
+  const [chatThread, setChatThread] = useState([])
+  const [prompt, setPrompt] = useState("");
+  const [system, setSystem] = useState("")
+  const [gptResponse, setGPTResponse] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false)
+  const [currentID, setCurrentId] = useState(false)
+  const [chatIds, setChatIds] = useState([])
+
+
+
+  const messageThreadContainer = useRef(null)
+
+  const systemIns = { role: "system", content: system }
+  const currentQuery = { role: 'user', content: prompt }
+
+
+
+  useEffect(() => {
+    document.scrollingElement.scroll(0, 1);
+
+    let chat = false
+    try {
+      if (currentID) {
+        chat = window.localStorage.getItem(currentID?.id);
+      }
+    } catch (error) {
+      console.log(error);
+    }
+    if (chat) {
+      setSystem(currentID?.content)
+      setChatThread(JSON.parse(chat))
+    } else {
+      setChatThread([])
+      setSystem('')
+    }
+  }, [currentID])
+
+
+  useEffect(() => {
+    let idsFromLocalStorage = false
+    try {
+      idsFromLocalStorage = window.localStorage.getItem('chatIds')
+    } catch (e) {
+      console.log(e)
+    }
+
+    if (idsFromLocalStorage) {
+      setChatIds(JSON.parse(idsFromLocalStorage))
+    }
+
+  }, [])
+
+  useEffect(() => {
+    setChatIds(ids => ids.map(idset => {
+      if (currentID?.id === idset.id) {
+        return { ...idset, ...systemIns }
+      } else {
+        return { ...idset }
+      }
+    }))
+
+  }, [currentID, system])
+
+  useEffect(() => {
+    if (chatIds.length !== 0) {
+      window.localStorage.setItem('chatIds', JSON.stringify(chatIds))
+    }
+  }, [chatIds])
+
+
+
+
+
+  useEffect(() => {
+    if (!loading && chatThread.length != 0 && chatThread[chatThread.length - 1]?.role !== 'assistant' && gptResponse !== '') {
+      const thread = [...chatThread, { role: 'assistant', content: gptResponse }]
+      window.localStorage.setItem(currentID?.id, JSON.stringify(thread))
+      setChatThread(thread)
+      setGPTResponse(false)
+
+    }
+
+  }, [loading, chatThread, gptResponse])
+
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(false)
+
+    let messageThread = [...chatThread]
+
+    messageThread = [...messageThread, currentQuery]
+    let chatThreadToSend = [systemIns, ...messageThread]
+
+    window.localStorage.setItem(currentID?.id, JSON.stringify(messageThread))
+
+    setChatThread(messageThread)
+
+    setGPTResponse('')
+    setPrompt('')
+
+    try {
+
+
+      const result = await fetch(process.env.NEXT_PUBLIC_OPENAI_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPEN_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4",
+          messages: chatThreadToSend,
+          temperature: 0.7,
+          top_p: 1,
+          frequency_penalty: 0,
+          presence_penalty: 0,
+          max_tokens: 2000,
+          stream: true,
+          n: 1,
+        }),
+      });
+
+      const reader = result.body.getReader();
+      let fullRes = ''
+
+      const decoder = new TextDecoder("utf-8")
+
+      while (true) {
+
+        const { value, done } = await reader.read();
+
+        if (done) {
+          console.log("The stream was already closed!");
+          // console.log(decoder.decode(value))
+          break
+        }
+        const decodedChunk = decoder.decode(value)
+        fullRes += decodedChunk
+        const lines = decodedChunk.split("\n")
+        const parsedLines = lines
+          .map(line => line.replace(/^data: /, "").trim())
+          .filter(line => line != "" && line != '[DONE]')
+          .map(line => JSON.parse(line))
+        // console.log(parsedLines);
+
+        for (const parsedLine of parsedLines) {
+          const { choices } = parsedLine;
+          const { delta } = choices[0]
+          const { content } = delta
+          if (content) {
+            setGPTResponse(e => e + content)
+            if (messageThreadContainer.current) {
+              messageThreadContainer.current.scrollTop = messageThreadContainer.current.scrollHeight
+            }
+            fullRes += content
+            console.log(content)
+          }
+        }
+      }
+      // if (fullRes !== '') {
+      //   setChatThread((prevThread) => [...prevThread, { role: 'assistant', content: fullRes }])
+      // }
+
+
+    } catch (e) {
+      //console.log(e);
+      setError("Something went wrong, please try again")
+      setGPTResponse("");
+    }
+    console.log("gpt response", gptResponse)
+    setLoading(false);
+  };
+
+  function initiateNewChat() {
+    const newId = crypto.randomUUID()
+    const newChatids = [{ id: newId, ...systemIns }, ...chatIds]
+    window.localStorage.setItem('chatIds', newChatids)
+    setCurrentId({ id: newId, ...systemIns })
+    setChatIds(newChatids)
+  }
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.js</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <>
+      <div className="grid w-full h-screen grid-cols-12 px-2 text-sm py-7">
+        <div className="col-span-3">
+          <div className="flex items-center justify-between mb-3">
+            <label>System Prompt</label>
+            <button
+              className="inline-flex items-center px-4 py-2 font-normal text-white rounded bg-slate-900 hover:bg-slate-600"
+              onClick={initiateNewChat}
+            >
+              New Chat
+            </button>
+          </div>
+          <textarea
+            className="block w-full h-36 max-h-36 rounded-md border-0 p-1.5 bg-slate-50 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-slate-900 sm:text-sm sm:leading-6"
+            type="text"
+            value={system}
+            placeholder="Please add System message"
+            onChange={(e) => setSystem(e.target.value)}
           >
-            By{' '}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+          </textarea>
+          <label className="block mt-2">Chats</label>
+          <div className="flex flex-col gap-2 py-2">
+
+            {chatIds.map(chatId => <button
+              onClick={() => setCurrentId(chatId)}
+              className="block p-1.5 w-full bg-slate-100 hover:bg-slate-400 transition-colors text-ellipsis truncate rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-slate-900 sm:text-sm sm:leading-6"
+            >
+              {chatId?.content}
+              <br />
+              {chatId?.id}
+            </button>)}
+          </div>
+        </div>
+
+
+        <div
+          className="flex flex-col justify-start col-span-9 ml-3"
+        >
+
+
+          <div ref={messageThreadContainer} style={{ overflowAnchor: 'none' }} className="h-full overflow-y-scroll max-h-[75vh]">
+            <div className="flex flex-col gap-1.5">
+              {chatThread.map(chat => <div className={`${chat?.role === 'assistant' ? 'bg-slate-300' : 'bg-slate-100'} p-2 rounded-md`}><span className="font-bold capitalize">{chat?.role}: </span>
+                <ReactMarkdown
+                  components={{
+                    code({ node, inline, className, children, ...props }) {
+                      const match = /language-(\w+)/.exec(className || '')
+                      return !inline && match ? (
+                        <SyntaxHighlighter
+                          {...props}
+                          children={String(children).replace(/\n$/, '')}
+                          style={nightOwl}
+                          language={match[1]}
+                          PreTag="div"
+                        />
+                      ) : (
+                        <code {...props} className={className}>
+                          {children}
+                        </code>
+                      )
+                    }
+                  }}
+                  remarkPlugins={[remarkGfm]}>
+                  {chat?.content}
+                </ReactMarkdown>
+              </div>)}
+            </div>
+            {gptResponse && (
+              <div
+                className={` mt-1.5 bg-slate-300  p-2 rounded-md`}
+              >
+
+                <span className={`font-bold capitalize ${loading ? 'animate-pulse' : ''}`}>assistant: </span>
+                <ReactMarkdown
+                  components={{
+                    code({ node, inline, className, children, ...props }) {
+                      const match = /language-(\w+)/.exec(className || '')
+                      return !inline && match ? (
+                        <SyntaxHighlighter
+                          {...props}
+                          children={String(children).replace(/\n$/, '')}
+                          style={nightOwl}
+                          language={match[1]}
+                          PreTag="div"
+                        />
+                      ) : (
+                        <code {...props} className={className}>
+                          {children}
+                        </code>
+                      )
+                    }
+                  }}
+                  remarkPlugins={[remarkGfm]}>
+                  {gptResponse}
+                </ReactMarkdown>
+
+              </div>
+            )}
+            {error && (
+              <div
+                className=""
+              >
+
+                <strong>API response:</strong>
+                {error}
+
+              </div>
+            )}
+            <div style={{ overflowAnchor: 'auto', height: '1px' }}></div>
+          </div>
+          <form className="mt-auto" onSubmit={handleSubmit}>
+            <textarea
+              className="block w-full rounded-md  border-0 p-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-slate-900 sm:text-sm sm:leading-6"
+              type="text"
+              value={prompt}
+              placeholder="Please ask openai"
+              onChange={(e) => setPrompt(e.target.value)}
+            >
+            </textarea>
+            <button
+              className="inline-flex items-center px-4 py-2 mt-2 font-normal text-white rounded bg-slate-900 hover:bg-slate-600"
+              disabled={loading || prompt.length === 0}
+              type="submit"
+            >
+              {loading ? "Generating..." : "Ask GPT"}
+            </button>
+          </form>
         </div>
       </div>
+    </>
+  );
+};
 
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
 
-      <div className="mb-32 grid text-center lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800 hover:dark:bg-opacity-30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore the Next.js 13 playground.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
-  )
-}
+export default ChatbotApp;
